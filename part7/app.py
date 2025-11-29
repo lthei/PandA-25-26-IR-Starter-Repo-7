@@ -18,8 +18,8 @@ import time
 import urllib.request
 import urllib.error
 
-from .constants import BANNER, HELP, POETRYDB_URL, CACHE_FILENAME
-from .models import Sonnet, SearchResult, Configuration, LineMatch
+from .constants import BANNER, HELP, POETRYDB_URL, CACHE_FILENAME # import constant CACHE_FILENAME
+from .models import Sonnet, SearchResult, Configuration, LineMatch # import LineMatch
 
 def find_spans(text: str, pattern: str):
     """Return [(start, end), ...] for all (possibly overlapping) matches.
@@ -78,12 +78,12 @@ def search_sonnet(sonnet: Sonnet, query: str) -> SearchResult:
         if spans:
             line_matches.append(
                 # ToDo 1: Use an instance of class LineMatch
-                LineMatch(idx, line_raw, spans)
+                LineMatch(idx, line_raw, spans) # instead of: {"line_no": idx, "text": line_raw, "spans": spans}
             )
 
     total = len(title_spans) + sum(len(lm.spans) for lm in line_matches)
     # ToDo 1: Use an instance of class SearchResult
-    return SearchResult(title_raw, title_spans, line_matches, total)
+    return SearchResult(title_raw, title_spans, line_matches, total) # instead of: {"title": title_raw,"title_spans": title_spans,"line_matches": line_matches,"matches": total}
 
 
 def combine_results(result1: SearchResult, result2: SearchResult) -> SearchResult:
@@ -93,8 +93,8 @@ def combine_results(result1: SearchResult, result2: SearchResult) -> SearchResul
 
     # ToDo 2: Use dot notation instead of keys to access the attributes of the search results
 
-    combined.matches = result1.matches + result2.matches
-    combined.title_spans = sorted(
+    combined.matches = result1.matches + result2.matches # instead of: combined["matches"] = result1["matches"] + result2["matches"]
+    combined.title_spans = sorted(                       # and so on...
         result1.title_spans + result2.title_spans
     )
 
