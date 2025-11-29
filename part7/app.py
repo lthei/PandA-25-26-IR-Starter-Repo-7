@@ -18,8 +18,8 @@ import time
 import urllib.request
 import urllib.error
 
-from .constants import BANNER, HELP, POETRYDB_URL
-from .models import Sonnet, SearchResult, Configuration
+from .constants import BANNER, HELP, POETRYDB_URL, CACHE_FILENAME
+from .models import Sonnet, SearchResult, Configuration, LineMatch
 
 def find_spans(text: str, pattern: str):
     """Return [(start, end), ...] for all (possibly overlapping) matches.
@@ -78,17 +78,12 @@ def search_sonnet(sonnet: Sonnet, query: str) -> SearchResult:
         if spans:
             line_matches.append(
                 # ToDo 1: Use an instance of class LineMatch
-                {"line_no": idx, "text": line_raw, "spans": spans}
+                LineMatch(idx, line_raw, spans)
             )
 
-    total = len(title_spans) + sum(len(lm["spans"]) for lm in line_matches)
+    total = len(title_spans) + sum(len(lm.spans) for lm in line_matches)
     # ToDo 1: Use an instance of class SearchResult
-    return {
-        "title": title_raw,
-        "title_spans": title_spans,
-        "line_matches": line_matches,
-        "matches": total,
-    }
+    return SearchResult(title_raw, title_spans, line_matches, total)
 
 
 def combine_results(result1: SearchResult, result2: SearchResult) -> SearchResult:
@@ -98,25 +93,25 @@ def combine_results(result1: SearchResult, result2: SearchResult) -> SearchResul
 
     # ToDo 2: Use dot notation instead of keys to access the attributes of the search results
 
-    combined["matches"] = result1["matches"] + result2["matches"]
-    combined["title_spans"] = sorted(
-        result1["title_spans"] + result2["title_spans"]
+    combined.matches = result1.matches + result2.matches
+    combined.title_spans = sorted(
+        result1.title_spans + result2.title_spans
     )
 
     # Merge line_matches by line number
 
     # ToDo 1: Instead of using a dictionary, e.g., dict(lm), copy the line match, e.g., lm.copy()!
-    lines_by_no = {lm["line_no"]: dict(lm) for lm in result1["line_matches"]}
-    for lm in result2["line_matches"]:
-        ln = lm["line_no"]
+    lines_by_no = {lm.line_no: lm.copy() for lm in result1.line_matches}
+    for lm in result2.line_matches:
+        ln = lm.line_no
         if ln in lines_by_no:
             # extend spans & keep original text
-            lines_by_no[ln]["spans"].extend(lm["spans"])
+            lines_by_no[ln].spans.extend(lm.spans)
         else:
-            lines_by_no[ln] = dict(lm)
+            lines_by_no[ln] = lm.copy()
 
     combined["line_matches"] = sorted(
-        lines_by_no.values(), key=lambda lm: lm["line_no"]
+        lines_by_no.values(), key=lambda lm: lm.line_no
     )
 
     return combined
@@ -129,7 +124,7 @@ def print_results(
     query_time_ms: float | None = None,
 ) -> None:
     total_docs = len(results)
-    matched = [r for r in results if r["matches"] > 0]
+    matched = [r for r in results if r.matches > 0]
 
     line = f'{len(matched)} out of {total_docs} sonnets contain "{query}".'
     if query_time_ms is not None:
@@ -140,18 +135,18 @@ def print_results(
         # ToDo 2: Use dot notation instead of key access of the search result
 
         title_line = (
-            ansi_highlight(r["title"], r["title_spans"])
+            ansi_highlight(r.title, r.title_spans)
             if highlight
-            else r["title"]
+            else r.title
         )
         print(f"\n[{idx}/{total_docs}] {title_line}")
-        for lm in r["line_matches"]:
+        for lm in r.line_matches:
             line_out = (
-                ansi_highlight(lm["text"], lm["spans"])
+                ansi_highlight(lm.text, lm.spans)
                 if highlight
-                else lm["text"]
+                else lm.text
             )
-            print(f"  [{lm['line_no']:2}] {line_out}")
+            print(f"  [{lm.line_no:2}] {line_out}")
 
 
 # ---------- Paths & data loading ----------
@@ -172,10 +167,12 @@ def fetch_sonnets_from_api() -> List[Sonnet]:
     """
     # ToDo 0: Copy your solution from Part 6
 
-    # POETRYDB_URL already contains the URL
-
-    sonnets = []
-    return sonnets
+    try:  # begin error-handling block
+        with urllib.request.urlopen(POETRYDB_URL) as response:  # open URL and get response
+            sonnets = json.load(response)  # parse the JSON data from the response
+            return sonnets
+    except Exception as e:  # catch any kind of runtime error
+        raise RuntimeError(f"Failed to fetch sonnets: {e}") from e  # print message and runtime error
 
 
 def load_sonnets() -> List[Sonnet]:
@@ -194,9 +191,18 @@ def load_sonnets() -> List[Sonnet]:
     """
     # ToDo 0: Copy your implementation from Part 6
 
-    # Default implementation: Load from the API always
+    filename = module_relative_path(CACHE_FILENAME)
 
-    return fetch_sonnets_from_api()
+    if os.path.exists(filename):  # if file with sonnets exists
+        print("Loaded sonnets from cache.")  # inform user
+        with open(filename, "r", encoding="utf-8") as f:  # open the file in read mode
+            return json.load(f)  # parse file and return list of sonnets
+    else:  # if file doesn't exist
+        data = fetch_sonnets_from_api()  # download data from API
+        print("Downloaded sonnets from PoetryDB.")  # inform user
+        with open(filename, "w", encoding="utf-8") as f:  # open file in write mode
+            json.dump(data, f, indent=2, ensure_ascii=False)  # save the pretty-printed data in the file
+        return data  # return the file with the sonnets
 
 # ---------- Config handling (carry over from Part 5) ----------
 
@@ -247,7 +253,12 @@ def main() -> None:
 
     # Load sonnets (from cache or API)
     # ToDo 0: Time how long loading the sonnets take and print it to the console (copy from Part 6)
+    start = time.perf_counter()  # start timer
     sonnets = load_sonnets()
+    end = time.perf_counter()  # end timer
+
+    elapsed = (end - start) * 1000  # calculate milliseconds
+    print(f"Elapsed time: {elapsed:.3f} [ms]")  # print time
 
     print(f"Loaded {len(sonnets)} sonnets.")
 
@@ -301,6 +312,8 @@ def main() -> None:
 
         # ToDo 0: Time how the execution of the user query takes (copy from Part 6)
 
+        start = time.perf_counter()  # start timer
+
         # query
         combined_results = []
 
@@ -323,17 +336,18 @@ def main() -> None:
                     # ToDo 2: Use dot notation instead of key access of the search result
 
                     if config.search_mode == "AND":
-                        if combined_result["matches"] > 0 and result["matches"] > 0:
+                        if combined_result.matches > 0 and result.matches > 0:
                             # Only if we have matches in both results, we consider the sonnet (logical AND!)
                             combined_results[i] = combine_results(combined_result, result)
                         else:
                             # Not in both. No match!
-                            combined_result["matches"] = 0
+                            combined_result.matches = 0
                     elif config.search_mode == "OR":
                         combined_results[i] = combine_results(combined_result, result)
 
+        end = time.perf_counter()  # end timer
         # Initialize elapsed_ms to contain the number of milliseconds the query evaluation took
-        elapsed_ms = 0
+        elapsed_ms = (end - start) * 1000  # calculate milliseconds
 
         print_results(raw, combined_results, config.highlight, elapsed_ms)
 
